@@ -12,24 +12,210 @@ const curry = fn => {
    };
 }
 
-function rangeElement(index, n, initial, final) {
-   return index * (final - initial) / (n - 1) + initial;
-}
-function range(n, initial, final, cycles = 1) {
-   return [...Array(n*cycles)].map((_, i) =>  rangeElement(i%n, ...arguments));
+function* rangeGen(start, stop, step = 1, cycles = 1, inclusive = true) {
+// function range(...args) {
+   // input
+   // 1 argument: range(stop) where start is 0
+   // 2 or more arguments: range(start, stop, step = 1, cycles = 1)
+   // returns inclusive range: [start, ..., stop]
+
+   // 0 arguments provided: throw Error
+   if (start === undefined) {
+      throw new Error('must provide at least one argument');
+   }
+   // 1 argument provided: use argument for value of stop
+   if (stop === undefined) {
+      stop = start;
+      start = 0;
+   } else {
+      // 2 or more arguments provided: validate step, cycles
+      if (step === 0) {
+         throw new Error('step cannot be 0');
+      }
+      if (cycles < 0) {
+         throw new Error('cycles must be greater than or equal to 0');
+      }
+   }
+   if (start === stop) {
+      return [start];
+   }
+   if (Math.sign(stop - start) !== Math.sign(step)) {
+      // equivalent to: if ((stop > start && step < 0) || (stop < start && step > 0)) {...}
+      step *= -1;
+      console.warn('sign of step value has been flipped to match sign of (stop - start)');
+   }
+
+   const n = Math.floor((stop - start) / step) + Number(inclusive);
+   const nTotal = Math.floor(n * cycles);
+   for (let i = 0; i < nTotal; i++) {
+      yield i % n * step + start;
+   }
+   // return [...Array(nTotal)].map((_, i) => i % n * step + start);
 }
 
+function range(start, stop, step, cycles, inclusive) {
+   return Array.from(rangeGen(...arguments));
+}
+
+function* rangeNGen(n, start, stop, cycles = 1, inclusive = true) {
+   if (n === undefined || start === undefined || stop === undefined) {
+      throw new Error('must provide at least 3 arguments: n, start, stop');
+   }
+   if (n <= 0 || !Number.isInteger(n)) {
+      throw new Error('n must be an integer greater than 0');
+   }
+   if (cycles < 0) {
+      throw new Error('cycles must be greater than or equal to 0');
+   }
+   if (start === stop) {
+      return [start];
+   }
+   const step = (stop - start) / (n - Number(inclusive));
+   const nTotal = Math.floor(n * cycles);
+   for (let i = 0; i < nTotal; i++) {
+      yield i % n * step + start;
+   }
+   // yield* rangeGen(start, stop, step, cycles, inclusive);
+   // return [...Array(n)].map((_, i) => i * (stop - start) / (n - 1) + start);
+}
+
+function rangeN(n, start, stop, cycles, inclusive) {
+   return Array.from(rangeNGen(...arguments));
+}
+
+function* eulerMethodGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   for (let t = tInitial; t < tFinal; t += h) {
+      y = y + h * fn(y, t);
+      yield y;
+   }
+}
+
+function eulerMethod(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(eulerMethodGen(...arguments));
+}
+
+function* eulerMethodVecGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   for (let t = tInitial; t < tFinal; t += h) {
+      y = p5.Vector.add(y, fn(y, t).mult(h));
+      // y = y + h * fn(y, t);
+      yield y;
+   }
+}
+
+function eulerMethodVec(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(eulerMethodVecGen(...arguments));
+}
+
+function* heunMethodGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   const k1 = (y, t) => fn(y, t);
+   const k2 = (y, t) => fn(y + k1(y,t), t + h);
+   const b1 = 1/2;
+   const b2 = 1/2;
+   for (let t = tInitial; t < tFinal; t += h) {
+      // yApprox = eulerMethodNext(y, fn, h, t);
+      // y = y + h/2 * (fn(y, t) +  fn(yApprox, t));
+      y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
+      yield y;
+   }
+}
+
+function heunMethod(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(heunMethodGen(...arguments));
+}
+
+function* heunMethodVecGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   const k1 = (y, t) => fn(y, t);
+   const k2 = (y, t) => fn(p5.Vector.add(y, k1(y,t)), t + h);
+   // const k2 = (y, t) => fn(y + k1(y,t), t + h);
+   const b1 = 1/2;
+   const b2 = 1/2;
+   for (let t = tInitial; t < tFinal; t += h) {
+      const bkSum = p5.Vector.mult(k1(y,t), b1).add(p5.Vector.mult(k2(y,t), b2));
+      y = p5.Vector.add(y, bkSum.mult(h));
+      // y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
+      yield y;
+   }
+}
+
+function heunMethodVec(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(heunMethodVecGen(...arguments));
+}
+
+function* RK4MethodGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   const k1 = (y, t) => fn(y, t);
+   const k2 = (y, t) => fn(y + k1(y,t)/2, t + h/2);
+   const k3 = (y, t) => fn(y + k2(y,t)/2, t + h/2);
+   const k4 = (y, t) => fn(y + k3(y,t), t + h);
+   const b1 = 1/6;
+   const b2 = 1/3;
+   const b3 = 1/3;
+   const b4 = 1/6;
+   for (let t = tInitial; t < tFinal; t += h) {
+      y = y + h * (b1 * k1(y,t) + b2 * k2(y,t) + b3 * k3(y,t) + b4 * k4(y,t));
+      yield y;
+   }
+}
+
+function RK4Method(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(RK4MethodGen(...arguments));
+}
+
+function* RK4MethodVecGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
+   // fn = y'(y,t) = slope of curve
+   let y = yInitial;
+   yield y;
+   const k1 = (y, t) => fn(y, t);
+   const k2 = (y, t) => fn(p5.Vector.add(y, p5.Vector.div(k1(y,t), 2)), t + h/2);
+   const k3 = (y, t) => fn(p5.Vector.add(y, p5.Vector.div(k2(y,t), 2)), t + h/2);
+   const k4 = (y, t) => fn(p5.Vector.add(y, k3(y,t)), t + h);
+   const b1 = 1/6;
+   const b2 = 1/3;
+   const b3 = 1/3;
+   const b4 = 1/6;
+   for (let t = tInitial; t < tFinal; t += h) {
+      const bk1 = p5.Vector.mult(k1(y,t), b1);
+      const bk2 = p5.Vector.mult(k2(y,t), b2);
+      const bk3 = p5.Vector.mult(k3(y,t), b3);
+      const bk4 = p5.Vector.mult(k4(y,t), b4);
+      const bkSum = bk1.add(bk2).add(bk3).add(bk4);
+      y = p5.Vector.add(y, bkSum.mult(h));
+      // y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
+      yield y;
+   }
+}
+
+function RK4MethodVec(yInitial, fn, h, tInitial, tFinal) {
+   return Array.from(RK4MethodVecGen(...arguments));
+}
+
+console.log('------');
+
+let fieldLines;
+let drawArrow;
 let sol, sphHelix;
-let pListSol, pListSphHelix;
-let drawCylFuncs, drawCylFuncsH;
-let drawArrowFuncs, drawArrowFuncsH;
+let testPointsSol, testPointsSphHelix;
 /// P5JS ///
 let canvas;
 function setup() {
    // +x: right, +y: downw, +z: towards
    canvas = createCanvas(windowWidth, windowHeight, WEBGL);
 
-   function fromToRotation(fromVec, toVec, camMatrix = true, epsilon = .01) {
+   function fromToRotation(fromVec, toVec, epsilon = .01, camMatrix = true) {
       // returns a 2D (3 by 3) rotation matrix
       // adapted from http://cs.brown.edu/research/pubs/pdfs/1999/Moller-1999-EBA.pdf
       // Moller & Hughes, 1999: 'Efficiently Building a Matrix to Rotate One Vector to Another'
@@ -114,15 +300,13 @@ function setup() {
       return (camMatrix) ? [...R[0], 0, ...R[1], 0, ...R[2], 0, 0, 0, 0, 1] : R;
    }
 
-   class Particle {
-      constructor(x = 0, y = 0, z = 0, r = 5, props = {}) {
+   class Point {
+      constructor(x = 0, y = 0, z = 0) {
          this.x = x;
          this.y = y;
          this.z = z;
-         this.r = r;
-         this.props = props;
 
-         this.size = 3;
+         // this.size = 3;
       }
 
       *[Symbol.iterator]() {
@@ -133,17 +317,6 @@ function setup() {
 
       toVector() {
          return createVector(...this);
-      }
-
-      render(pre, post) {
-         push();
-         if (pre instanceof Function) pre(this);
-
-         translate(...this);
-         // sphere(this.r);
-
-         if (post instanceof Function) post(this);
-         pop();
       }
    }
 
@@ -182,27 +355,103 @@ function setup() {
       }
    }
 
+   class Path {
+      constructor(...vertices) {
+         this.vertices = vertices;
+         this._length;
+      }
+
+      static create(vertexInitial, numVertices, callback) {
+         // callback returns Point
+         let vertices = [...Array(numVertices)];
+         for (let i = 0; i < numVertices; i++) {
+            if (i === 0) {
+               vertices[i] = vertexInitial;
+            } else {
+               vertices[i] = callback(vertices[i-1]);
+            }
+         }
+         return new Path(...vertices);
+      }
+
+      *[Symbol.iterator]() {
+         for (let vertex of this.vertices) {
+            yield vertex;
+         }
+      }
+
+      get length() {
+         return this._length || this.vertices.reduce((length, vertex, i, vertices) => {
+               const dl = (i !== 0) ? this.lengthBetween(vertex, vertices[i-1]) : 0;
+               return length + dl;
+            }, 0);
+      }
+
+      lengthBetween(vInitial, vFinal) {
+         return p5.Vector.dist(vFinal, vInitial);
+      }
+
+      getLineElements(closedPath = false) {
+         let lineElements = [];
+         this.vertices.forEach((vertex, i, vertices) => {
+            const isLastVertex = (i === vertices.length - 1);
+            if (isLastVertex && !closedPath) {
+               return;
+            }
+            const vertexNext = isLastVertex ? vertices[0] : vertices[i+1];
+            lineElements.push(new LineElement(vertex, vertexNext));
+         });
+         return lineElements;
+      }
+   }
+
+   // let path = new Path(createVector(-1,0,5), createVector(1,2,3));
+   // console.log(path);
+   // console.log(path.length);
+   // console.log(path.getLineElements());
+   // const getB = vec => createVector(1,0,0);
+   // const cb = (dx, vec) => createVector(vec.x + getB(vec).x * dx);
+   // const callbackFn = partial(cb);
+   // // const callbackFn = (dx) => point => new Point(point.x + dx);
+   // const vi = createVector();
+   // const nn = 10;
+   // let pathCreated = Path.create(vi, nn, callbackFn(2));
+   // console.log(pathCreated);
+   // console.log(pathCreated.length);
+
    class Solenoid {
-      constructor(L, R, N, n) {
+      constructor(L, R, numTurns, n) {
          // length of solenoid
          this.L = L
          // radius of solenoid
          this.R = R;
          // number of turns
-         this.N = N;
+         this.numTurns = numTurns;
          // elements per turn
          this.n = n;
 
          // number of elements
-         this.nTotal = this.N * this.n;
+         this.nTotal = this.numTurns * this.n;
 
          this.elements = [];
-         for (let i = 0; i < this.nTotal; i++) {
-            const vInitial = (i === 0) ? this.calcPos(i) : this.elements[i-1].vFinal.copy();
-            const vFinal = this.calcPos(i+1);
-            this.elements.push(new LineElement(vInitial, vFinal, {
-               turnIndex: Math.floor(i / this.n)
-            }));
+         this.vertices = []
+         const thetaList = rangeN(this.n, 0, 2*Math.PI, this.numTurns, false);
+         thetaList.push(2*Math.PI);
+         const zGen = rangeNGen(this.nTotal + 1, 0, this.L);
+         // const zList = rangeN(this.nTotal + 1, 0, this.L);
+         for (let i = 0; i < this.nTotal + 1; i++) {
+            const theta = thetaList[i];
+            const x = this.R * Math.cos(theta);
+            const y = this.R * Math.sin(theta);
+            const z = zGen.next().value;
+            // const z = zList[i];
+            const vertex = createVector(x, y, z);
+            this.vertices.push(vertex);
+            if (i !== 0) {
+               const vInitial = this.vertices[i-1];
+               const vFinal = vertex;
+               this.elements.push(new LineElement(vInitial, vFinal, {turnIndex: Math.floor((i-1) / this.n)}));
+            }
          }
       }
 
@@ -210,46 +459,25 @@ function setup() {
          for (let el of this.elements) {
             yield el;
          }
-      }
-
-      calcPos(index) {
-         const theta = 2 * Math.PI * this.N / this.nTotal;
-         const x = this.R * Math.cos(index * theta);
-         const y = this.R * Math.sin(index * theta);
-         const z = index * this.L / (this.nTotal - 1);
-         return createVector(x, y, z);
-      }
-
-      render(pre, preParticle, postParticle, post) {
-         push();
-         if (pre instanceof Function) pre(this);
-
-         // equivalent to  partial(partialRight(fn));
-         const particlePartial = fn => solenoid => i => particle => (fn instanceof Function) ? fn.call(null, particle, i, solenoid) : undefined;
-         const partialPre = particlePartial(preParticle)(this);
-         const partialPost = particlePartial(postParticle)(this);
-         this.particles.forEach((particle, i) => particle.render(partialPre(i), partialPost(i)));
-
-         if (post instanceof Function) post(this);
-         pop();
       }
    }
 
    class SphericalHelix {
-      constructor(R, N, n) {
+      constructor(R, numTurns, n) {
          // radius of sphere
          this.R = R;
          // number of turns
-         this.N = N;
+         this.numTurns = numTurns;
          // elements per turn
          this.n = n;
          
          // number of elements
-         this.nTotal = this.N * this.n;
-         // angle ration constant: phi = c * theta
-         this.c = 2 * this.N;
+         this.nTotal = this.numTurns * this.n;
+         // angle ratio constant: phi = c * theta
+         this.c = 2 * this.numTurns;
          
          this.elements = [];
+         //TODO: refactor to match Solenoid
          for (let i = 0; i < this.nTotal; i++) {
             const vInitial = (i === 0) ? this.calcPos(i) : this.elements[i-1].vFinal.copy();
             const vFinal = this.calcPos(i+1);
@@ -266,36 +494,20 @@ function setup() {
       }
 
       calcPos(index) {
-         const theta = rangeElement(index, this.nTotal, 0, Math.PI);
+         const theta = index * (Math.PI - 0) / (this.nTotal - 1) + 0;
+         // const theta = rangeElement(index, this.nTotal, 0, Math.PI);
          const x = this.R * Math.sin(theta) * Math.cos(this.c*theta);
          const y = this.R * Math.sin(theta) * Math.sin(this.c*theta);
          const z = this.R * Math.cos(theta);
          return createVector(x, y, z);
       }
-
-      render(pre, preParticle, postParticle, post) {
-         push();
-         if (pre instanceof Function) pre(this);
-
-         // equivalent to  partial(partialRight(fn));
-         const particlePartial = fn => solenoid => i => particle => (fn instanceof Function) ? fn.call(null, particle, i, solenoid) : undefined;
-         const partialPre = particlePartial(preParticle)(this);
-         const partialPost = particlePartial(postParticle)(this);
-         this.particles.forEach((particle, i) => particle.render(partialPre(i), partialPost(i)));
-
-         if (post instanceof Function) post(this);
-         pop();
-      }
    }
 
-   function calcB(elPos, elVec, testPos, I = 1, sf = 1) {
-      // displacement vector from current element to test point
-      const r = p5.Vector.sub(testPos, elPos);
+   function calcB(observationPos, sourcePos, lineElement, I = 1, scaleFactor = 1) {
+      // displacement vector from source element to observation point
+      const r = p5.Vector.sub(observationPos, sourcePos);
 
-      const numerator = p5.Vector.cross(elVec, r);
-      const denominator = r.mag()**3;
-
-      return numerator.mult(sf * I / denominator);
+      return p5.Vector.cross(lineElement, r).mult(scaleFactor * I / r.mag()**3);
    }
 
    function drawCylinder(v0, v1) {
@@ -319,23 +531,24 @@ function setup() {
       };
    }
 
-   function drawArrow(p, v) {
-      const R = fromToRotation(v, createVector(0,1,0));
-      const cylL = v.mag();
-      return function (cylR = p.r, coneR = 2*cylR, coneL = 2*coneR) {
+   drawArrow = function(arrowVector, position = createVector(0,0,0)) {
+      const cylinderOrientation = createVector(0,1,0);
+      const R = fromToRotation(arrowVector, cylinderOrientation);
+      const cylinderLength = arrowVector.mag();
+      return function (cylinderRadius = 3, coneRadius = 1.5 * cylinderRadius, coneLength = 2 * coneRadius) {
          push();
          
-         translate(...p);
+         translate(position);
          applyMatrix(...R);
          
          push();
-         translate(0, cylL/2, 0);
-         cylinder(cylR, cylL);
+         translate(0, cylinderLength/2, 0);
+         cylinder(cylinderRadius, cylinderLength);
          pop();
          
          push();
-         translate(0, cylL + coneL/2, 0);
-         cone(coneR, coneL);
+         translate(0, cylinderLength + coneLength/2, 0);
+         cone(coneRadius, coneLength);
          pop();
 
          pop();
@@ -354,7 +567,8 @@ function setup() {
             y = j * Ly / (m - 1) + yi;
             for(let k = 0; k < l; k++) {
                x = k * Lx / (l - 1) + xi;
-               const P = new Particle(x, y, z, 2, {B: createVector(0,0,0)});
+               const P = new Point(x, y, z);
+               P.B = createVector(0,0,0);
                list.push(P);
             }
          }
@@ -362,30 +576,74 @@ function setup() {
       return list;
    }
 
-   sol = new Solenoid(600, 100, 15, 25);
-   sphHelix = new SphericalHelix(200, 15, 25);
-
+   
+   sol = new Solenoid(400, 50, 50, 15);
    const mult = 1.5;
    const w = mult * sol.R;
    const Lz = mult * sol.L;
    const zi = -(Lz - sol.L)/2;
    const zf = zi + Lz;
-   pListSol = getPList(5,5,7, [-w, w], [-w, w], [zi, zf]);
-   for (let el of sol) {
-      pListSol.forEach(P => {
-         const dB = calcB(el.pos, el.dl, P.toVector(), 100);
-         P.props.B.add(dB);
-      })
+   testPointsSol = getPList(5,5,7, [-w, w], [-w, w], [zi, zf]);
+   for (let testPoint of testPointsSol) {
+      const testPointVector = testPoint.toVector();
+      // loop through every test point
+      for (let fieldElement of sol) {
+         // add up differential contributions to B from every element of solenoid
+         const dB = calcB(testPointVector, fieldElement.pos, fieldElement.dl, 100);
+         testPoint.B.add(dB);
+      }
+      testPoint.renderArrow = drawArrow(testPoint.B);
    }
-   
-   const h = sphHelix.R;
-   pListSphHelix = getPList(7,7,7, [-h, h], [-h, h], [-h, h]);
-   for (let el of sphHelix) {
-      pListSphHelix.forEach(P => {
-         const dB = calcB(el.pos, el.dl, P.toVector(), 100);
-         P.props.B.add(dB);
-      })
-   }
+
+   const cb = (solenoid, dx, vertex) => {
+      let B = createVector(0,0,0);
+      // add up differential contributions to B from every element of solenoid
+      for (let fieldElement of solenoid) {
+         const dB = calcB(vertex, fieldElement.pos, fieldElement.dl, 100);
+         B.add(dB);
+      }
+      // vertex.B = B;
+      const Bhat = B.copy().normalize();
+      return p5.Vector.add(vertex, Bhat.mult(dx));
+   };
+   const callbackFn = partial(cb);
+   const numVertices = 100;
+   const d = .8*sol.R;
+   const zVal = sol.L/2;
+   const vi0 = createVector(0,0,zVal);
+   const vi1 = createVector(0,d,zVal);
+   const vi2 = createVector(d,0,zVal);
+   const vi3 = createVector(-d,0,zVal);
+   const vi4 = createVector(0,-d,zVal);
+   let vArr = [vi0, vi1, vi2, vi3, vi4];
+   // const fl0 = Path.create(vi0, numVertices, callbackFn(sol, dx));
+   // const fl1 = Path.create(vi1, numVertices, callbackFn(sol, dx));
+   // const fl2 = Path.create(vi2, numVertices, callbackFn(sol, dx));
+   // const fl3 = Path.create(vi3, numVertices, callbackFn(sol, dx));
+   // const fl4 = Path.create(vi4, numVertices, callbackFn(sol, dx));
+   // fieldLines = [fl0, fl1, fl2, fl3, fl4];
+
+   const calcBSum = (solenoid) => (y, t) => {
+      let B = createVector();
+      for (let el of solenoid) {
+         B.add(calcB(y, el.pos, el.dl, 100));
+      }
+      const Bhat = B.copy().normalize();
+      return Bhat;
+   };
+   // fieldLines = vArr.map(v => eulerMethodVec(v, calcBSum(sol), 5, 0, 1000).filter((_, index) => index % 10 === 0));
+   fieldLinesH = vArr.map(v => heunMethodVec(v, calcBSum(sol), 5, 0, 1000).filter((_, index) => index % 10 === 0));
+   // fieldLinesRK4 = vArr.map(v => RK4MethodVec(v, calcBSum(sol), 5, 0, 1000).filter((_, index) => index % 10 === 0));
+
+   // sphHelix = new SphericalHelix(200, 15, 25);
+   // const h = sphHelix.R;
+   // testPointsSphHelix = getPList(7,7,7, [-h, h], [-h, h], [-h, h]);
+   // for (let fieldElement of sphHelix) {
+   //    testPointsSphHelix.forEach(testPoint => {
+   //       const dB = calcB(testPoint.toVector(), fieldElement.pos, fieldElement.dl, 100);
+   //       testPoint.B.add(dB);
+   //    })
+   // }
    
    // noLoop();
 }
@@ -402,39 +660,92 @@ function draw() {
 
    const origin = [0, 0, 0];
    // axes
-   push();
-   const len = sol.L / 2;
-   stroke('red');
-   line(...origin, 2 * len, 0, 0);
-   stroke('green');
-   line(...origin, 0, 2 * len, 0);
-   stroke('blue');
-   line(...origin, 0, 0, 2 * len);
-   pop();
+   // push();
+   // const len = sol.L / 2;
+   // stroke('red');
+   // line(...origin, 2 * len, 0, 0);
+   // stroke('green');
+   // line(...origin, 0, 2 * len, 0);
+   // stroke('blue');
+   // line(...origin, 0, 0, 2 * len);
+   // pop();
 
    push();
    translate(0,0,-sol.L/2);
    normalMaterial();
+   // sol.vertices.forEach((v,i) => {
+   //    push();
+   //    fill('black');
+   //    translate(v.x, v.y, v.z);
+   //    sphere(3)
+   //    pop();
+   // });
    sol.elements.forEach(el => {
       push();
       colorMode(HSL);
-      const hue = el.props.turnIndex * 360 / (sol.N - 1);
+      const hue = el.props.turnIndex * 360 / (sol.numTurns - 1);
       fill(hue, 80, 60);
       el.drawCylinder();
       pop();
    });
+   // fieldLines.forEach(fieldLine => {
+   //    push();
+   //    noFill();
+   //    stroke('red');
+   //    beginShape()
+   //    for (const v of fieldLine) {
+   //       vertex(v.x, v.y, v.z);
+   //    }
+   //    endShape()
+   //    pop();
+   // })
+   fieldLinesH.forEach(fieldLine => {
+      push();
+      noFill();
+      stroke('blue');
+      beginShape()
+      for (const v of fieldLine) {
+         vertex(v.x, v.y, v.z);
+      }
+      endShape();
+      pop();
+   })
+   // fieldLinesRK4.forEach(fieldLine => {
+   //    push();
+   //    // normalMaterial();
+   //    noFill();
+   //    stroke('cyan');
+   //    beginShape()
+   //    for (const v of fieldLine) {
+   //       vertex(v.x, v.y, v.z);
+   //    }
+   //    endShape();
+   //    pop();
+   // })
+   // testPointsSol.forEach(p => {
+   //    push();
+   //    translate(p.x, p.y, p.z);
+   //    p.renderArrow();
+   //    pop();
+   // })
    pop();
 
    push();
    normalMaterial();
-   sphHelix.elements.forEach(el => {
-      push();
-      colorMode(HSL);
-      const hue = el.props.turnIndex * 360 / (sphHelix.N - 1);
-      fill(hue, 80, 60);
-      el.drawCylinder();
-      pop();
-   });
+   // sphHelix.elements.forEach(el => {
+   //    push();
+   //    colorMode(HSL);
+   //    const hue = el.props.turnIndex * 360 / (sphHelix.numTurns - 1);
+   //    fill(hue, 80, 60);
+   //    el.drawCylinder();
+   //    pop();
+   // });
+   // testPointsSphHelix.forEach(p => {
+   //    push();
+   //    translate(...p);
+   //    drawArrow(p.B)();
+   //    pop();
+   // })
    pop();
 }
 
