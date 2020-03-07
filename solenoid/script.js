@@ -14,7 +14,7 @@ const curry = fn => {
 const compose = (...fns) => fns.reduce((f, g) => (...args) => f(g(...args)));
 
 function* rangeGen(start, stop, step = 1, cycles = 1, inclusive = true) {
-// function range(...args) {
+   // function range(...args) {
    // input
    // 1 argument: range(stop) where start is 0
    // 2 or more arguments: range(start, stop, step = 1, cycles = 1)
@@ -118,13 +118,13 @@ function* heunMethodGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
    let y = yInitial;
    yield y;
    const k1 = (y, t) => fn(y, t);
-   const k2 = (y, t) => fn(y + k1(y,t), t + h);
-   const b1 = 1/2;
-   const b2 = 1/2;
+   const k2 = (y, t) => fn(y + k1(y, t), t + h);
+   const b1 = 1 / 2;
+   const b2 = 1 / 2;
    for (let t = tInitial; t < tFinal; t += h) {
       // yApprox = eulerMethodNext(y, fn, h, t);
       // y = y + h/2 * (fn(y, t) +  fn(yApprox, t));
-      y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
+      y = y + h * (b1 * k1(y, t) + b2 * k2(y, t));
       yield y;
    }
 }
@@ -138,12 +138,12 @@ function* heunMethodVecGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
    let y = yInitial;
    yield y;
    const k1 = (y, t) => fn(y, t);
-   const k2 = (y, t) => fn(p5.Vector.add(y, k1(y,t)), t + h);
+   const k2 = (y, t) => fn(p5.Vector.add(y, k1(y, t)), t + h);
    // const k2 = (y, t) => fn(y + k1(y,t), t + h);
-   const b1 = 1/2;
-   const b2 = 1/2;
+   const b1 = 1 / 2;
+   const b2 = 1 / 2;
    for (let t = tInitial; t < tFinal; t += h) {
-      const bkSum = p5.Vector.mult(k1(y,t), b1).add(p5.Vector.mult(k2(y,t), b2));
+      const bkSum = p5.Vector.mult(k1(y, t), b1).add(p5.Vector.mult(k2(y, t), b2));
       y = p5.Vector.add(y, bkSum.mult(h));
       // y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
       yield y;
@@ -154,26 +154,237 @@ function heunMethodVec(yInitial, fn, h, tInitial, tFinal) {
    return Array.from(heunMethodVecGen(...arguments));
 }
 
-function dotArray(arrA, arrB) {
-   if (arrA.length !== arrB.length) {
-      throw new Error('arrays must have equal length');
+function sumPairwise(arr) {
+   const n = arr.length;
+   let s;
+   if (n <= 10) {
+      // base case: simple summation for a sufficiently small array
+      s = arr.reduce((sum, val) => sum + val, 0);
+   } else {
+      // divide and conquer: recursively sum two halves of the array
+      const m = Math.floor(n / 2);
+      s = sumPairwise(arr.slice(0, m)) + sumPairwise(arr.slice(m, n));
    }
-   return arrA.reduce((sum, a, i) => {
-      return sum + a * arrB[i];
-   }, 0);
+   return s;
+}
+const testArr = [1 / 3, 1 / 3, 2 / 3, 4, 3, 2, 4, 3 / 7, 8 / 3, .32432, 6.89347693473, 3, 2];
+console.log(sumPairwise(testArr));
+
+function isIterable(obj) {
+   return Symbol.iterator in Object(obj);
 }
 
-function rungeKuttaNext(y, t, h, weights, kArr) {
-   if (weights.length !== kArr.length) {
-      throw new Error('arrays must have equal length');
+function limitIterable(iterable, iterationLimit, callback = (itCount, result, it) => itCount) {
+   // callback will be executed if iterator terminates early
+   if (!isIterable(iterable)) {
+      throw new Error('First argument must be iterable');
    }
-   const sum = weights.reduce((sum, weight, i) => {
-      return sum + weight * kArr[i](y,t);
-   }, 0);
-   return y + h * sum;
+   if (iterationLimit < 1 || !Number.isInteger(iterationLimit)) {
+      throw new Error('Second argument must be an integer greater than or equal to 1');
+   }
+   if (!(callback instanceof Function)) {
+      throw new Error('Third argument must be a function');
+   }
+   return (function* () {
+      const iterator = iterable[Symbol.iterator]();
+      // value passed to the first invocation of next() is always ignored, so no need to pass argument to next() outside of while loop
+      let result = iterator.next();
+      let iterationCount = 0;
+      while (!result.done && iterationCount < iterationLimit) {
+         const nextArg = yield result.value;
+         result = iterator.next(nextArg);
+         iterationCount++;
+      }
+      if (result.done) {
+         // iterator has been fully consumed, so result.value will be the iterator's return value (the value present alongside done: true)
+         return result.value;
+      } else {
+         // iteration was terminated before completion (note that iterator will still accept calls to next() inside the callback function)
+         callback(iterationCount, result, iterator);
+      }
+   })();
 }
 
-function rungeKutta(numStages, nodes, rkMatrix, weights) {
+class RungeKuttaMethod {
+   // defines an explicit Runge-Kutta method
+   constructor(numStages, nodes, rkMatrix, weights) {
+      // Arguments in terms of standard Runge-Kutta Method notation:
+      // numStages:
+      // s
+      // * Integer greater than or equal to 1
+      // Butcher Tableau values
+      // nodes:
+      // [c_2, c_3, ..., c_(s-1), c_s]
+      // * Array with length equal to (s-1)
+      // * Array entries are numbers in range [0,1] 
+      // ** NOTE: c_1 is always 0, so it is omitted - the nodes array for a first order Euler Method will be empty []
+      // rkMatrix (Runge-Kutta Matrix):
+      // [a_ij] = [[a_21], [a_31, 32], ..., [a_s1, a_s2, ..., a_s(s-1)]]
+      // * Array with length equal to (s-1)
+      // * Array entries (a_ij) are arrays with length equal to j = rkMatrix[index+1]
+      // * a_ij entries are numbers in range [0,1]
+      // * Sum of a_ij entries must equal the corresponding node value, a_i1 + a_i3 + ... + a_i(s-1) = c_i  <==>  sum(rkMatrix[index]) = nodes[index]
+      // ** NOTE: [a_11] is always omitted - the rKMatrix array for a first order Euler Method will be empty []
+      // weights:
+      // [b_1, b_2, ..., b_(s-1), b_s]
+      // * Array with length equal to (s)
+      // * Array entries are numbers in range [0,1] 
+      // * Sum of array entries must equal 1 (approximately, to allow for fractional rounding errors)
+
+      if (typeof numStages === 'string') {
+         [numStages, nodes, rkMatrix, weights] = RungeKuttaMethod.getDefaults(numStages);
+      } else {
+         RungeKuttaMethod.validate(...arguments);
+      }
+
+      this.numStages = numStages;
+      this.nodes = nodes;
+      this.rkMatrix = rkMatrix;
+      this.weights = weights;
+   }
+
+   static getDefaults(name) {
+      switch (name) {
+         case 'euler':
+            return [1, [],
+               [],
+               [1]
+            ];
+         case 'midpoint':
+            return [2, [.5],
+               [
+                  [.5]
+               ],
+               [0, 1]
+            ];
+         case 'rk4':
+            return [4, [.5, .5, 1],
+               [
+                  [.5],
+                  [0, .5],
+                  [0, 0, 1]
+               ],
+               [.167, .333, .333, .167]
+            ];
+         default:
+            throw new Error('name does not match any default Runge Kutta methods');
+      }
+   }
+
+   static validate(numStages, nodes, rkMatrix, weights) {
+      // numStages
+      if (numStages < 1 || !Number.isInteger(numStages)) {
+         throw new Error('numStages must be an integer greater than or equal to 1')
+      }
+      // nodes
+      if (!(nodes instanceof Array) || nodes.length !== numStages - 1) {
+         throw new Error('nodes must be an array with length equal to (numStages - 1)')
+      }
+      if (nodes.some(node => node < 0 || node > 1)) {
+         throw new Error('each node must be a number between 0 (inclusive) and 1 (inclusive)')
+      }
+      // rkMatrix
+      if (!(rkMatrix instanceof Array) || rkMatrix.length !== numStages - 1) {
+         throw new Error('rkMatrix must be an array with length equal to (numStages - 1)')
+      }
+      rkMatrix.forEach((rkEntry, entryIndex) => {
+         if (!(rkEntry instanceof Array)) {
+            throw new Error('each entry in rkMatrix must be an instanceof Array');
+         }
+         if (!(rkEntry instanceof Array) || rkEntry.length !== entryIndex + 1) {
+            throw new Error(`each entry in rkMatrix must have a length equal to (entryIndex + 1). Entry provided at index ${entryIndex} has length equal to ${rkEntry.length}, but should be ${entryIndex + 1}`);
+         }
+         const entrySum = rkEntry.reduce((sum, entryVal) => sum += entryVal, 0);
+         if (entrySum !== nodes[entryIndex]) {
+            throw new Error(`sum of values in each rkMatrix entry must be equal to the entry's corresponding node value. Sum of entry provided at index ${entryIndex} is equal to ${entrySum}, but should be ${nodes[entryIndex]}`);
+         }
+      })
+      // weights
+      if (!(weights instanceof Array) || weights.length !== numStages) {
+         throw new Error('weights must be an array with length equal to numStages')
+      }
+      if (weights.some(weight => weight < 0 || weight > 1)) {
+         throw new Error('each weight must be a number between 0 (inclusive) and 1 (inclusive)')
+      }
+      // TODO: handle fractional rounding errors
+      const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+      if (weightSum !== 1) {
+         console.warn(`sum of weights is not equal to 1. Current sum is ${weightSum}`);
+         // throw new Error('sum of all weights must equal 1');
+      }
+   }
+
+   * makeIterator(dy_dt, yInitial, tInitial = 0, tFinal = 10, stepSize = 1) {
+      // y0, f(y,t), h, t0, tn
+      let y = yInitial;
+      yield y;
+      for (let t = tInitial; t < tFinal; t += stepSize) {
+         const slopes = [];
+         // sum of weights * slopes <==> b * k
+         const bkSum = this.weights.reduce((sum, weight, stageIndex) => {
+            let y_k = y;
+            let t_k = t;
+            if (stageIndex > 0) {
+               // sum of matrix coefficents * slopes from previous stages
+               const akSum = this.rkMatrix[stageIndex - 1].reduce((sum, a, j) => sum + a * slopes[j], 0);
+               y_k += stepSize * akSum;
+               t_k += stepSize * this.nodes[stageIndex - 1];
+            }
+            const k = dy_dt(y_k, t_k);
+            slopes.push(k);
+            return sum + weight * slopes[stageIndex];
+         }, 0);
+         // k_1 = dy_dt(t_n, y_n)
+         // k_2 = f(k_1) = dy_dt(t_n + h * c_2, y_n + h * (a_21 * k_1))
+         // k_s = f(k_(s-1)) = dy_dt(t_n + h * c_s, y_n + h * (a_s1*k_1 + a_s2*k_2 + ... + a_s(s-1)*k_(s-1)))
+         // y_(n+1) = y_n + h * (b_1*k_1 + b_2*k_2 + ... + b_s*k_s);
+         y = y + stepSize * bkSum;
+         yield y;
+      }
+   }
+}
+
+class InitialValueProblem {
+   // first order IVP
+   constructor(dy_dt, yInitial, tInitial = 0, tFinal = 10) {
+      // y'(t) = f(y(t), t)
+      // y(t0) = y0
+      // typeof dy_dt(...) === typeof yInitial
+      this.dy_dt = dy_dt;
+      this.yInitial = yInitial;
+      this.tInitial = tInitial;
+      this.tFinal = tFinal;
+   }
+
+   * makeIterator(rkMethod, stepSize = 1, maxLength = 1000) {
+      if (!(rkMethod instanceof RungeKuttaMethod)) {
+         if (typeof rkMethod === 'string') {
+            rkMethod = new RungeKuttaMethod(rkMethod);
+         } else {
+            throw new Error('First argument must be string or instanceof RungeKuttaMethod');
+         }
+      }
+      const rkIterator = rkMethod.makeIterator(this.dy_dt, this.yInitial, this.tInitial, this.tFinal, stepSize);
+      for (let i = 0; i < maxLength; i++) {
+         const next = rkIterator.next();
+         if (!next.done) {
+            yield next.value;
+         } else {
+            break;
+         }
+      }
+      if (!rkIterator.next().done) {
+         console.warn('solution exited early. If more elements are needed, change maxLength');
+      }
+   }
+
+   solve(rkMethod, stepSize, maxLength) {
+      return Array.from(this.makeIterator(...arguments));
+   }
+}
+
+function buildRungeKutta(numStages = 1, nodes = [], rkMatrix = [], weights = [1]) {
+   // default values build Euler Method
    // Arguments in terms of standard Runge-Kutta Method notation:
    // numStages:
    // s
@@ -239,19 +450,21 @@ function rungeKutta(numStages, nodes, rkMatrix, weights) {
    }
 
    console.log('_____');
-   return function*(yInitial, dy_dt, step = 1, tInitial = 0, tFinal = 4) {
+   return function* (yInitial, dy_dt, step = 1, tInitial = 0, tFinal = 10) {
       // y0, f(y,t), h, t0, tn
       let y = yInitial;
       yield y;
       for (let t = tInitial; t < tFinal; t += step) {
          let slopes = [];
+         // sum of weights * slopes <==> b * k
          const bkSum = weights.reduce((sum, weight, stageIndex) => {
             let y_k = y;
             let t_k = t;
-            if (stageIndex !== 0) {
-               const akSum = rkMatrix[stageIndex-1].reduce((sum, a, j) => sum + a * slopes[j], 0);
+            if (stageIndex > 0) {
+               // sum of matrix coefficents * slopes from previous stages
+               const akSum = rkMatrix[stageIndex - 1].reduce((sum, a, j) => sum + a * slopes[j], 0);
                y_k += step * akSum;
-               t_k += step * nodes[stageIndex-1];
+               t_k += step * nodes[stageIndex - 1];
             }
             const k = dy_dt(y_k, t_k);
             slopes.push(k);
@@ -267,53 +480,133 @@ function rungeKutta(numStages, nodes, rkMatrix, weights) {
    }
 }
 
+function* fibonacci() {
+   let fn1 = 0;
+   let fn2 = 1;
+   while (true) {
+      let current = fn1;
+      fn1 = fn2;
+      fn2 = current + fn1;
+      let reset = yield current;
+      if (reset) {
+         fn1 = 0;
+         fn2 = 1;
+      }
+   }
+}
+const fib = fibonacci();
+const fibLimited = limitIterable(fibonacci(), 9);
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next(true));
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log(fibLimited.next());
+console.log('\\\\\\')
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next(true));
+console.log(fib.next());
+console.log(fib.next());
+console.log(fib.next());
+
 // Euler Method: only consistent method with 1 stage 
-// const em = rungeKutta(1, [], [], [1]);
+const EulerMethod = new RungeKuttaMethod('euler');
+const MidpointMethod = new RungeKuttaMethod('midpoint');
+const RK4Method1 = new RungeKuttaMethod('rk4');
+///////
 const y0 = 1;
 const h = 1;
-const tRange = [1,4]
-const rkFunc = (y,t) => y;
-const em = rungeKutta(1, [], [], [1])(y0, rkFunc, h, ...tRange);
-console.log(em.next());
-console.log(em.next());
-console.log(em.next());
-console.log(em.next());
-console.log(em.next());
+const tRange = [1, 4]
+const rkFunc = (y, t) => y;
+// console.log('isIterable: ' + isIterable(EulerMethod.makeIterator(rkFunc, y0, 0, 100)));
+// console.log(EulerMethod.makeIterator(rkFunc, y0, 0, 100));
+// const test = limitIterable(EulerMethod.makeIterator(rkFunc, y0, 1, 5), 4);
+for (const val of limitIterable('abcdefghijklmnopqrstuvwxyz', 10)) {
+   console.log(val);
+}
+for (const val of limitIterable([1,2,3], 5)) {
+   // original iterable terminates before limit
+   console.log(val);
+}
+console.log('---')
+const IVP = new InitialValueProblem(rkFunc, y0, ...tRange);
+const solutionArr1 = IVP.solve('euler', .5);
+const solutionIterator1 = IVP.makeIterator('euler', .5);
+const solutionArr2 = IVP.solve('euler', 1);
+const solutionIterator2 = IVP.makeIterator('euler', 1);
+// console.log(solutionArr1);
+// for (let val of solutionIterator1) {
+//    console.log(val);
+// }
+// console.log(solutionArr2);
+// for (let val of solutionIterator2) {
+//    console.log(val);
+// }
+const emClassGen = EulerMethod.makeIterator(rkFunc, y0, ...tRange, h);
+const emClassGen1 = EulerMethod.makeIterator(rkFunc, y0, ...tRange, h);
+// console.log(emClassGen);
+// console.log(emClassGen.next());
+// console.log(emClassGen1.next());
+const em = buildRungeKutta(1, [], [], [1])(y0, rkFunc, h, ...tRange);
+// console.log(em.next());
+// console.log(em.next());
+// console.log(em.next());
+// console.log(em.next());
+// console.log(em.next());
 // // Midpoint Method
-// const mm = rungeKutta(2, [.5], [[.5]], [0, 1]);
-const mm = rungeKutta(2, [.5], [[.5]], [0, 1])(y0, rkFunc, h, ...tRange);
-console.log(mm.next());
-console.log(mm.next());
-console.log(mm.next());
-console.log(mm.next());
-console.log(mm.next());
+const mm = buildRungeKutta(2, [.5], [
+   [.5]
+], [0, 1])(y0, rkFunc, h, ...tRange);
+// console.log(mm.next());
+// console.log(mm.next());
+// console.log(mm.next());
+// console.log(mm.next());
+// console.log(mm.next());
 // // Heun Method
-// rungeKutta(2, [1], [[1]], [.5, .5]);
+// buildRungeKutta(2, [1], [[1]], [.5, .5]);
 // // Ralston Method
-// rungeKutta(2, [2/3], [[2/3]], [.25, .75]);
+// buildRungeKutta(2, [2/3], [[2/3]], [.25, .75]);
 // // RK4 Method
-const rk4 = rungeKutta(4, [.5, .5, 1], [[.5], [0, .5], [0, 0, 1]], [.167, .333, .333, .167])(y0, rkFunc, h, ...tRange);
-console.log(rk4.next());
-console.log(rk4.next());
-console.log(rk4.next());
-console.log(rk4.next());
-console.log(rk4.next());
-// rungeKutta(4, [.5, .5, 1], [[.5], [0, .5], [0, 0, 1]], [.167, .333, .333, .167]);
+const rk4 = buildRungeKutta(4, [.5, .5, 1], [
+   [.5],
+   [0, .5],
+   [0, 0, 1]
+], [.167, .333, .333, .167])(y0, rkFunc, h, ...tRange);
+// console.log(rk4.next());
+// console.log(rk4.next());
+// console.log(rk4.next());
+// console.log(rk4.next());
+// console.log(rk4.next());
+// buildRungeKutta(4, [.5, .5, 1], [[.5], [0, .5], [0, 0, 1]], [.167, .333, .333, .167]);
 
 function* RK4MethodGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
    // fn = y'(y,t) = slope of curve
    let y = yInitial;
    yield y;
    const k1 = (y, t) => fn(y, t);
-   const k2 = (y, t) => fn(y + k1(y,t)/2, t + h/2);
-   const k3 = (y, t) => fn(y + k2(y,t)/2, t + h/2);
-   const k4 = (y, t) => fn(y + k3(y,t), t + h);
-   const b1 = 1/6;
-   const b2 = 1/3;
-   const b3 = 1/3;
-   const b4 = 1/6;
+   const k2 = (y, t) => fn(y + k1(y, t) / 2, t + h / 2);
+   const k3 = (y, t) => fn(y + k2(y, t) / 2, t + h / 2);
+   const k4 = (y, t) => fn(y + k3(y, t), t + h);
+   const b1 = 1 / 6;
+   const b2 = 1 / 3;
+   const b3 = 1 / 3;
+   const b4 = 1 / 6;
    for (let t = tInitial; t < tFinal; t += h) {
-      y = rungeKuttaNext(y, t, h, [b1,b2,b3,b4], [k1,k2,k3,k4]);
+      const sum = weights.reduce((sum, weight, i) => {
+         return sum + weight * kArr[i](y, t);
+      }, 0);
+      y = y + h * sum;
       // y = y + h * (b1 * k1(y,t) + b2 * k2(y,t) + b3 * k3(y,t) + b4 * k4(y,t));
       yield y;
    }
@@ -333,26 +626,26 @@ function* RK4MethodVecGen(yInitial, fn, h = 1, tInitial = 0, tFinal = 4) {
    }
    const k2 = (y, t) => {
       // console.log('2')
-      return fn(p5.Vector.add(y, p5.Vector.div(k1(y,t), 2)), t + h/2);
+      return fn(p5.Vector.add(y, p5.Vector.div(k1(y, t), 2)), t + h / 2);
    }
    const k3 = (y, t) => {
       // console.log('3')
-      return fn(p5.Vector.add(y, p5.Vector.div(k2(y,t), 2)), t + h/2);
+      return fn(p5.Vector.add(y, p5.Vector.div(k2(y, t), 2)), t + h / 2);
    }
    const k4 = (y, t) => {
       // console.log('4')
-      return fn(p5.Vector.add(y, k3(y,t)), t + h);
+      return fn(p5.Vector.add(y, k3(y, t)), t + h);
    }
-   const b1 = 1/6;
-   const b2 = 1/3;
-   const b3 = 1/3;
-   const b4 = 1/6;
+   const b1 = 1 / 6;
+   const b2 = 1 / 3;
+   const b3 = 1 / 3;
+   const b4 = 1 / 6;
    for (let t = tInitial; t < tFinal; t += h) {
       // console.log('---')
-      const bk1 = p5.Vector.mult(k1(y,t), b1);
-      const bk2 = p5.Vector.mult(k2(y,t), b2);
-      const bk3 = p5.Vector.mult(k3(y,t), b3);
-      const bk4 = p5.Vector.mult(k4(y,t), b4);
+      const bk1 = p5.Vector.mult(k1(y, t), b1);
+      const bk2 = p5.Vector.mult(k2(y, t), b2);
+      const bk3 = p5.Vector.mult(k3(y, t), b3);
+      const bk4 = p5.Vector.mult(k4(y, t), b4);
       const bkSum = bk1.add(bk2).add(bk3).add(bk4);
       y = p5.Vector.add(y, bkSum.mult(h));
       // y = y + h * (b1 * k1(y,t) + b2 * k2(y,t));
@@ -453,7 +746,7 @@ function calcB(observationPos, sourcePos, lineElement, I = 1, scaleFactor = 1) {
    // displacement vector from source element to observation point
    const r = p5.Vector.sub(observationPos, sourcePos);
 
-   return p5.Vector.cross(lineElement, r).mult(scaleFactor * I / r.mag()**3);
+   return p5.Vector.cross(lineElement, r).mult(scaleFactor * I / r.mag() ** 3);
 }
 
 function drawCylinder(v0, v1) {
@@ -467,7 +760,7 @@ function drawCylinder(v0, v1) {
 
       translate(pos);
       if (!rotateCenter) {
-         translate(0, L/2, 0);
+         translate(0, L / 2, 0);
       }
       applyMatrix(...R);
 
@@ -477,23 +770,23 @@ function drawCylinder(v0, v1) {
    };
 }
 
-function drawArrow(arrowVector, position = new p5.Vector(0,0,0)) {
-   const cylinderOrientation = new p5.Vector(0,1,0);
+function drawArrow(arrowVector, position = new p5.Vector(0, 0, 0)) {
+   const cylinderOrientation = new p5.Vector(0, 1, 0);
    const R = fromToRotation(arrowVector, cylinderOrientation);
    const cylinderLength = arrowVector.mag();
    return function (cylinderRadius = 3, coneRadius = 1.5 * cylinderRadius, coneLength = 2 * coneRadius) {
       push();
-      
+
       translate(position);
       applyMatrix(...R);
-      
+
       push();
-      translate(0, cylinderLength/2, 0);
+      translate(0, cylinderLength / 2, 0);
       cylinder(cylinderRadius, cylinderLength);
       pop();
-      
+
       push();
-      translate(0, cylinderLength + coneLength/2, 0);
+      translate(0, cylinderLength + coneLength / 2, 0);
       cone(coneRadius, coneLength);
       pop();
 
@@ -501,20 +794,20 @@ function drawArrow(arrowVector, position = new p5.Vector(0,0,0)) {
    }
 }
 
-function getPList(l, m, n, [xi =  0, xf = 100], [yi =  0, yf = 100], [zi =  0, zf = 100]) {
+function getPList(l, m, n, [xi = 0, xf = 100], [yi = 0, yf = 100], [zi = 0, zf = 100]) {
    const Lx = xf - xi;
    const Ly = yf - yi;
    const Lz = zf - zi;
    let list = [];
    let x, y, z;
-   for(let i = 0; i < n; i++) {
+   for (let i = 0; i < n; i++) {
       z = i * Lz / (n - 1) + zi;
-      for(let j = 0; j < m; j++) {
+      for (let j = 0; j < m; j++) {
          y = j * Ly / (m - 1) + yi;
-         for(let k = 0; k < l; k++) {
+         for (let k = 0; k < l; k++) {
             x = k * Lx / (l - 1) + xi;
             const P = new Point(x, y, z);
-            P.B = new p5.Vector(0,0,0);
+            P.B = new p5.Vector(0, 0, 0);
             list.push(P);
          }
       }
@@ -567,7 +860,7 @@ class LineElement {
 
       translate(this.pos);
       if (!rotateCenter) {
-         translate(0, this.dl.mag()/2, 0);
+         translate(0, this.dl.mag() / 2, 0);
       }
       applyMatrix(...this.rotationMatrix);
 
@@ -590,7 +883,7 @@ class Path {
          if (i === 0) {
             vertices[i] = vertexInitial;
          } else {
-            vertices[i] = callback(vertices[i-1]);
+            vertices[i] = callback(vertices[i - 1]);
          }
       }
       return new Path(...vertices);
@@ -604,9 +897,9 @@ class Path {
 
    get length() {
       return this._length || this.vertices.reduce((length, vertex, i, vertices) => {
-            const dl = (i !== 0) ? this.lengthBetween(vertex, vertices[i-1]) : 0;
-            return length + dl;
-         }, 0);
+         const dl = (i !== 0) ? this.lengthBetween(vertex, vertices[i - 1]) : 0;
+         return length + dl;
+      }, 0);
    }
 
    lengthBetween(vInitial, vFinal) {
@@ -620,7 +913,7 @@ class Path {
          if (isLastVertex && !closedPath) {
             return;
          }
-         const vertexNext = isLastVertex ? vertices[0] : vertices[i+1];
+         const vertexNext = isLastVertex ? vertices[0] : vertices[i + 1];
          lineElements.push(new LineElement(vertex, vertexNext));
       });
       return lineElements;
@@ -643,8 +936,8 @@ class Solenoid {
 
       this.elements = [];
       this.vertices = []
-      const thetaList = rangeN(this.n, 0, 2*Math.PI, this.numTurns, false);
-      thetaList.push(2*Math.PI);
+      const thetaList = rangeN(this.n, 0, 2 * Math.PI, this.numTurns, false);
+      thetaList.push(2 * Math.PI);
       const zGen = rangeNGen(this.nTotal + 1, 0, this.L);
       // const zList = rangeN(this.nTotal + 1, 0, this.L);
       for (let i = 0; i < this.nTotal + 1; i++) {
@@ -656,9 +949,11 @@ class Solenoid {
          const vertex = new p5.Vector(x, y, z);
          this.vertices.push(vertex);
          if (i !== 0) {
-            const vInitial = this.vertices[i-1];
+            const vInitial = this.vertices[i - 1];
             const vFinal = vertex;
-            this.elements.push(new LineElement(vInitial, vFinal, {turnIndex: Math.floor((i-1) / this.n)}));
+            this.elements.push(new LineElement(vInitial, vFinal, {
+               turnIndex: Math.floor((i - 1) / this.n)
+            }));
          }
       }
    }
@@ -678,17 +973,17 @@ class SphericalHelix {
       this.numTurns = numTurns;
       // elements per turn
       this.n = n;
-      
+
       // number of elements
       this.nTotal = this.numTurns * this.n;
       // angle ratio constant: phi = c * theta
       this.c = 2 * this.numTurns;
-      
+
       this.elements = [];
       //TODO: refactor to match Solenoid
       for (let i = 0; i < this.nTotal; i++) {
-         const vInitial = (i === 0) ? this.calcPos(i) : this.elements[i-1].vFinal.copy();
-         const vFinal = this.calcPos(i+1);
+         const vInitial = (i === 0) ? this.calcPos(i) : this.elements[i - 1].vFinal.copy();
+         const vFinal = this.calcPos(i + 1);
          this.elements.push(new LineElement(vInitial, vFinal, {
             turnIndex: Math.floor(i / this.n)
          }));
@@ -704,8 +999,8 @@ class SphericalHelix {
    calcPos(index) {
       const theta = index * (Math.PI - 0) / (this.nTotal - 1) + 0;
       // const theta = rangeElement(index, this.nTotal, 0, Math.PI);
-      const x = this.R * Math.sin(theta) * Math.cos(this.c*theta);
-      const y = this.R * Math.sin(theta) * Math.sin(this.c*theta);
+      const x = this.R * Math.sin(theta) * Math.cos(this.c * theta);
+      const y = this.R * Math.sin(theta) * Math.sin(this.c * theta);
       const z = this.R * Math.cos(theta);
       return new p5.Vector(x, y, z);
    }
@@ -718,6 +1013,7 @@ let sol, sphHelix;
 let testPointsSol, testPointsSphHelix;
 /// P5JS ///
 let canvas;
+
 function setup() {
    // +x: right, +y: downw, +z: towards
    canvas = createCanvas(windowWidth, windowHeight, WEBGL);
@@ -726,9 +1022,9 @@ function setup() {
    const mult = 1.5;
    const w = mult * sol.R;
    const Lz = mult * sol.L;
-   const zi = -(Lz - sol.L)/2;
+   const zi = -(Lz - sol.L) / 2;
    const zf = zi + Lz;
-   testPointsSol = getPList(5,5,7, [-w, w], [-w, w], [zi, zf]);
+   testPointsSol = getPList(5, 5, 7, [-w, w], [-w, w], [zi, zf]);
    for (let testPoint of testPointsSol) {
       const testPointVector = testPoint.toVector();
       // loop through every test point
@@ -741,7 +1037,7 @@ function setup() {
    }
 
    const cb = (solenoid, dx, vertex) => {
-      let B = createVector(0,0,0);
+      let B = createVector(0, 0, 0);
       // add up differential contributions to B from every element of solenoid
       for (let fieldElement of solenoid) {
          const dB = calcB(vertex, fieldElement.pos, fieldElement.dl, 100);
@@ -753,13 +1049,13 @@ function setup() {
    };
    const callbackFn = partial(cb);
    const numVertices = 100;
-   const d = .8*sol.R;
-   const zVal = sol.L/2;
-   const vi0 = createVector(0,0,zVal);
-   const vi1 = createVector(0,d,zVal);
-   const vi2 = createVector(d,0,zVal);
-   const vi3 = createVector(-d,0,zVal);
-   const vi4 = createVector(0,-d,zVal);
+   const d = .8 * sol.R;
+   const zVal = sol.L / 2;
+   const vi0 = createVector(0, 0, zVal);
+   const vi1 = createVector(0, d, zVal);
+   const vi2 = createVector(d, 0, zVal);
+   const vi3 = createVector(-d, 0, zVal);
+   const vi4 = createVector(0, -d, zVal);
    let vArr = [vi0, vi1, vi2, vi3, vi4];
    // const fl0 = Path.create(vi0, numVertices, callbackFn(sol, dx));
    // const fl1 = Path.create(vi1, numVertices, callbackFn(sol, dx));
@@ -789,7 +1085,7 @@ function setup() {
    //       testPoint.B.add(dB);
    //    })
    // }
-   
+
    noLoop();
 }
 
@@ -816,7 +1112,7 @@ function draw() {
    // pop();
 
    push();
-   translate(0,0,-sol.L/2);
+   translate(0, 0, -sol.L / 2);
    normalMaterial();
    // sol.vertices.forEach((v,i) => {
    //    push();
