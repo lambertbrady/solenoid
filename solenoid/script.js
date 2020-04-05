@@ -167,14 +167,12 @@ function sumPairwise(arr) {
    }
    return s;
 }
-const testArr = [1 / 3, 1 / 3, 2 / 3, 4, 3, 2, 4, 3 / 7, 8 / 3, .32432, 6.89347693473, 3, 2];
-console.log(sumPairwise(testArr));
 
 function isIterable(obj) {
    return Symbol.iterator in Object(obj);
 }
 
-function limitIterable(iterable, iterationLimit, callback = (itCount, result, it) => itCount) {
+function limitIterable(iterable, iterationLimit, callback = (itCount, result, it) => undefined) {
    // callback will be executed if iterator terminates early
    if (!isIterable(iterable)) {
       throw new Error('First argument must be iterable');
@@ -200,9 +198,47 @@ function limitIterable(iterable, iterationLimit, callback = (itCount, result, it
          return result.value;
       } else {
          // iteration was terminated before completion (note that iterator will still accept calls to next() inside the callback function)
-         callback(iterationCount, result, iterator);
+         return callback(iterationCount, result, iterator);
       }
    })();
+}
+
+
+class nVector {
+   constructor(...components) {
+      this.components = components;
+      this.n = components.length;
+   }
+
+   *[Symbol.iterator]() {
+      for (const component of this.components) {
+         yield component;
+      }
+   }
+
+   get(index) {
+      return this.components[index];
+   }
+
+   add(v) {
+      this.components.map((el, i) => el + v[i])
+   }
+
+   mult() {
+
+   }
+}
+
+function addArrays(A, B) {
+   return A.map((a, i) => a + B[i]);
+}
+
+function dotArrays(A, B) {
+   return A.map((a, i) => a * B[i]);
+}
+
+function multArray(arr, scalar) {
+   return arr.map(val => scalar * val);
 }
 
 class RungeKuttaMethod {
@@ -314,31 +350,130 @@ class RungeKuttaMethod {
       }
    }
 
-   * makeIterator(dy_dt, yInitial, tInitial = 0, tFinal = 10, stepSize = 1) {
+   yNextScalar(dy_dt, y, t, stepSize) {
+      // sum of weights * slopes <==> b * k
+      const slopes = [];
+      const bkSum = this.weights.reduce((sum, b, stageIndex) => {
+         let y_k = y;
+         let t_k = t;
+         if (stageIndex > 0) {
+            // sum of matrix coefficents * slopes from previous stages
+            const akSum = this.rkMatrix[stageIndex - 1].reduce((sum, a, j) => sum + a * slopes[j], 0);
+            y_k += stepSize * akSum;
+            t_k += stepSize * this.nodes[stageIndex - 1];
+         }
+         const k = dy_dt(y_k, t_k);
+         slopes.push(k);
+         return sum + b * k;
+      }, 0);
+      return y + stepSize * bkSum;
+   }
+
+   yNext(dy_dt, y, t, stepSize) {
+      console.log('=======')
+      const isScalar = (typeof y === 'number');
+      const slopes = [];
+      ///////////////////////
+      let bkSum = (isScalar) ? 0 : y.map(() => 0);
+      // let bkSum = 0;
+      // const bkSum = y.map(() => 0);
+      ///////////////////////
+      for (let i = 0; i < this.numStages; i++) {
+         let yInput = y;
+         let tInput = t;
+
+         if (i > 0) {
+            ///////////////////////
+            let akSum = (isScalar) ? 0 : y.map(() => 0);
+            // let akSum = 0;
+            // const akSum = y.map(() => 0);
+            ///////////////////////
+            for (let j = 0; j < i; j++) {
+               ///////////////////////
+               // akSum = add(akSum, mult(this.rkMatrix[i-1][j], slopes[j]));
+               if (isScalar) {
+                  akSum += this.rkMatrix[i-1][j] * slopes[j];
+               } else {
+                  akSum = addArrays(akSum, multArray(slopes[j], this.rkMatrix[i-1][j]));
+               }
+               ///////////////////////
+            }
+            ///////////////////////
+            // yInput = add(yInput, mult(stepSize, akSum));
+            if (isScalar) {
+               yInput += stepSize * akSum;
+            } else {
+               yInput = addArrays(yInput, multArray(akSum, stepSize));
+            }
+            ///////////////////////
+            tInput += stepSize * this.nodes[i-1]
+         }
+
+         const k = dy_dt(yInput, tInput);
+         slopes.push(k);
+
+         ///////////////////////
+         // bkSum = add(bkSum, mult(this.weights[i], k));
+         if (isScalar) {
+            bkSum += this.weights[i] * k;
+         } else {
+            bkSum = addArrays(bkSum, multArray(k, this.weights[i]));
+         }
+         ///////////////////////
+      }
+
+      if (isScalar) {
+         return y + stepSize * bkSum;
+      } else {
+         return addArrays(y, multArray(bkSum, stepSize));
+      }
+   }
+
+   * makeIterator(dy_dt, yInitial, [tInitial = 0, tFinal = 10] = [], stepSize = 1) {
+      // k_1 = dy_dt(t_n, y_n)
+      // k_2 = f(k_1) = dy_dt(t_n + h * c_2, y_n + h * (a_21 * k_1))
+      // k_s = f(k_(s-1)) = dy_dt(t_n + h * c_s, y_n + h * (a_s1*k_1 + a_s2*k_2 + ... + a_s(s-1)*k_(s-1)))
+      // y_(n+1) = y_n + h * (b_1*k_1 + b_2*k_2 + ... + b_s*k_s);
+      if (!(typeof dy_dt(yInitial, tInitial) === typeof yInitial)) {
+         throw new Error('Return value of first argument must match type of second argument, such that typeof f(y,t) === typeof y');
+      }
+      // const isScalar = (typeof yInitial === 'number');
+      let y = yInitial;
+      yield y;
+      for (let t = tInitial; t < tFinal; t += stepSize) {
+         // if (isScalar) {
+         //    y = this.yNextScalar(dy_dt, y, t, stepSize);
+         // } else {
+            y = this.yNext(dy_dt, y, t, stepSize);
+         // }
+         yield y;
+      }
+   }
+   * makeIteratorVec(dy_dt, yInitial, [tInitial = 0, tFinal = 10] = [], stepSize = 1) {
       // y0, f(y,t), h, t0, tn
       let y = yInitial;
       yield y;
       for (let t = tInitial; t < tFinal; t += stepSize) {
-         const slopes = [];
          // sum of weights * slopes <==> b * k
+         const slopes = [];
          const bkSum = this.weights.reduce((sum, weight, stageIndex) => {
             let y_k = y;
             let t_k = t;
             if (stageIndex > 0) {
                // sum of matrix coefficents * slopes from previous stages
-               const akSum = this.rkMatrix[stageIndex - 1].reduce((sum, a, j) => sum + a * slopes[j], 0);
-               y_k += stepSize * akSum;
+               const akSum = this.rkMatrix[stageIndex - 1].reduce((sum, a, j) => sum.add(p5.Vector.mult(slopes[j], a)), new p5.Vector());
+               y_k.add(akSum.mult(stepSize));
                t_k += stepSize * this.nodes[stageIndex - 1];
             }
             const k = dy_dt(y_k, t_k);
             slopes.push(k);
-            return sum + weight * slopes[stageIndex];
-         }, 0);
+            return sum.add(slopes[stageIndex].mult(weight));
+         }, new p5.Vector());
          // k_1 = dy_dt(t_n, y_n)
          // k_2 = f(k_1) = dy_dt(t_n + h * c_2, y_n + h * (a_21 * k_1))
          // k_s = f(k_(s-1)) = dy_dt(t_n + h * c_s, y_n + h * (a_s1*k_1 + a_s2*k_2 + ... + a_s(s-1)*k_(s-1)))
          // y_(n+1) = y_n + h * (b_1*k_1 + b_2*k_2 + ... + b_s*k_s);
-         y = y + stepSize * bkSum;
+         y.add(bkSum.mult(stepSize));
          yield y;
       }
    }
@@ -346,17 +481,26 @@ class RungeKuttaMethod {
 
 class InitialValueProblem {
    // first order IVP
+   // constructor(dy_dt, yInitial, ...tRanges) {
    constructor(dy_dt, yInitial, tInitial = 0, tFinal = 10) {
+      // dy_dt: Function(y: number || array, t: number): number || array
       // y'(t) = f(y(t), t)
       // y(t0) = y0
-      // typeof dy_dt(...) === typeof yInitial
       this.dy_dt = dy_dt;
       this.yInitial = yInitial;
+      
+      this.isScalar = (typeof this.yInitial === 'number');
+      this.numDimensions = (this.isScalar) ? 1 : this.yInitial.length;
+      
+      if (!(typeof dy_dt(yInitial, tInitial) === typeof yInitial)) {
+         throw new Error('Return value of first argument must match type of second argument, such that typeof f(y,t) === typeof y');
+      }
       this.tInitial = tInitial;
       this.tFinal = tFinal;
+
    }
 
-   * makeIterator(rkMethod, stepSize = 1, maxLength = 1000) {
+   * makeIterator(rkMethod, stepSize = 1, limit = 1000) {
       if (!(rkMethod instanceof RungeKuttaMethod)) {
          if (typeof rkMethod === 'string') {
             rkMethod = new RungeKuttaMethod(rkMethod);
@@ -364,22 +508,15 @@ class InitialValueProblem {
             throw new Error('First argument must be string or instanceof RungeKuttaMethod');
          }
       }
-      const rkIterator = rkMethod.makeIterator(this.dy_dt, this.yInitial, this.tInitial, this.tFinal, stepSize);
-      for (let i = 0; i < maxLength; i++) {
-         const next = rkIterator.next();
-         if (!next.done) {
-            yield next.value;
-         } else {
-            break;
-         }
-      }
-      if (!rkIterator.next().done) {
-         console.warn('solution exited early. If more elements are needed, change maxLength');
-      }
+      const rkIterator = rkMethod.makeIterator(this.dy_dt, this.yInitial, [this.tInitial, this.tFinal], stepSize);
+      // const rkIterator = (this.isScalar)
+      //    ? rkMethod.makeIterator(this.dy_dt, this.yInitial, [this.tInitial, this.tFinal], stepSize)
+      //    : rkMethod.makeIteratorVec(this.dy_dt, this.yInitial, [this.tInitial, this.tFinal], stepSize);
+      yield* limitIterable(rkIterator, limit, () => console.warn('Solution exited early. If more elements are needed, change limit'));
    }
 
-   solve(rkMethod, stepSize, maxLength) {
-      return Array.from(this.makeIterator(...arguments));
+   solve(rkMethod, stepSize, limit) {
+      return [...this.makeIterator(...arguments)];
    }
 }
 
@@ -480,46 +617,6 @@ function buildRungeKutta(numStages = 1, nodes = [], rkMatrix = [], weights = [1]
    }
 }
 
-function* fibonacci() {
-   let fn1 = 0;
-   let fn2 = 1;
-   while (true) {
-      let current = fn1;
-      fn1 = fn2;
-      fn2 = current + fn1;
-      let reset = yield current;
-      if (reset) {
-         fn1 = 0;
-         fn2 = 1;
-      }
-   }
-}
-const fib = fibonacci();
-const fibLimited = limitIterable(fibonacci(), 9);
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next(true));
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log(fibLimited.next());
-console.log('\\\\\\')
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next(true));
-console.log(fib.next());
-console.log(fib.next());
-console.log(fib.next());
-
 // Euler Method: only consistent method with 1 stage 
 const EulerMethod = new RungeKuttaMethod('euler');
 const MidpointMethod = new RungeKuttaMethod('midpoint');
@@ -529,32 +626,28 @@ const y0 = 1;
 const h = 1;
 const tRange = [1, 4]
 const rkFunc = (y, t) => y;
-// console.log('isIterable: ' + isIterable(EulerMethod.makeIterator(rkFunc, y0, 0, 100)));
-// console.log(EulerMethod.makeIterator(rkFunc, y0, 0, 100));
+const rkFuncArr = (y, t) => [y[0]+y[1], y[1], y[2]];
 // const test = limitIterable(EulerMethod.makeIterator(rkFunc, y0, 1, 5), 4);
-for (const val of limitIterable('abcdefghijklmnopqrstuvwxyz', 10)) {
-   console.log(val);
-}
-for (const val of limitIterable([1,2,3], 5)) {
-   // original iterable terminates before limit
-   console.log(val);
-}
 console.log('---')
 const IVP = new InitialValueProblem(rkFunc, y0, ...tRange);
 const solutionArr1 = IVP.solve('euler', .5);
 const solutionIterator1 = IVP.makeIterator('euler', .5);
 const solutionArr2 = IVP.solve('euler', 1);
 const solutionIterator2 = IVP.makeIterator('euler', 1);
-// console.log(solutionArr1);
-// for (let val of solutionIterator1) {
-//    console.log(val);
-// }
-// console.log(solutionArr2);
-// for (let val of solutionIterator2) {
-//    console.log(val);
-// }
-const emClassGen = EulerMethod.makeIterator(rkFunc, y0, ...tRange, h);
-const emClassGen1 = EulerMethod.makeIterator(rkFunc, y0, ...tRange, h);
+for (let val of solutionIterator1) {
+   console.log(val);
+}
+for (let val of solutionIterator2) {
+   console.log(val);
+}
+const IVPVec = new InitialValueProblem(rkFuncArr, [1,2,.5], ...tRange);
+const solutionIterator3 = IVPVec.makeIterator('euler', 1);
+for (const vec of solutionIterator3) {
+   console.log(vec);
+}
+
+const emClassGen = EulerMethod.makeIterator(rkFunc, y0, tRange, h);
+const emClassGen1 = EulerMethod.makeIterator(rkFunc, y0, tRange, h);
 // console.log(emClassGen);
 // console.log(emClassGen.next());
 // console.log(emClassGen1.next());
